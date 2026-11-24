@@ -1,22 +1,30 @@
-
 import os
 import hmac
 import uvicorn
 
 from openai import OpenAI
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
 
-# API configuration
-client = OpenAI(
-    base_url=os.environ["UPSTREAM_BASE_URL"],
-    api_key=os.environ["UPSTREAM_API_KEY"]
-)
+
+# Environment variables
+UPSTREAM_BASE_URL = os.environ["UPSTREAM_BASE_URL"]
+UPSTREAM_API_KEY = os.environ["UPSTREAM_API_KEY"]
+ACCESS_TOKEN = os.environ["MCP_ACCESS_TOKEN"]
 
 MODEL = os.getenv("MODEL", "claude-opus-4-6")
-ACCESS_TOKEN = os.environ["MCP_ACCESS_TOKEN"]
+
+HOSTNAME = "claude-production-352548e2.up.railway.app"
+
+
+# Upstream API client
+client = OpenAI(
+    base_url=UPSTREAM_BASE_URL,
+    api_key=UPSTREAM_API_KEY
+)
+
 
 # MCP server
 mcp = FastMCP("Claude Opus Bridge")
@@ -26,30 +34,40 @@ mcp = FastMCP("Claude Opus Bridge")
 def ask_opus(prompt: str) -> str:
     """Send a prompt to the configured AI model."""
 
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "user", "content": prompt}
-        ]
-    )
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
 
-    return response.choices[0].message.content or "No response"
+        return (
+            response.choices[0].message.content
+            or "No response received"
+        )
+
+    except Exception as error:
+        return f"Upstream API error: {str(error)}"
 
 
-# Create MCP application
-app = mcp.streamable_http_app()
-
-
-# Host validation
-app.add_middleware(
-    TrustedHostMiddleware,
+# MCP transport security
+security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
     allowed_hosts=[
-        "claude-production-352548e2.up.railway.app"
+        HOSTNAME,
+        HOSTNAME + ":*"
     ]
 )
 
 
-# Authentication middleware
+# Create Streamable HTTP application
+app = mcp.streamable_http_app(
+    transport_security=security
+)
+
+
+# Bearer token authentication
 class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
@@ -76,6 +94,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 app.add_middleware(AuthMiddleware)
 
 
+# Railway startup
 if __name__ == "__main__":
 
     port = int(os.getenv("PORT", "8000"))
