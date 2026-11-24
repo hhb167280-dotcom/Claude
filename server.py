@@ -1,13 +1,13 @@
+
 import os
 import hmac
 import uvicorn
 
 from openai import OpenAI
 from mcp.server.fastmcp import FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
-
 
 # API configuration
 client = OpenAI(
@@ -36,20 +36,20 @@ def ask_opus(prompt: str) -> str:
     return response.choices[0].message.content or "No response"
 
 
-# Allow Railway's public hostname
-security = TransportSecuritySettings(
+# Create MCP application
+app = mcp.streamable_http_app()
+
+
+# Host validation
+app.add_middleware(
+    TrustedHostMiddleware,
     allowed_hosts=[
-        "claude-production-352548e2.up.railway.app",
-        "claude-production-352548e2.up.railway.app:*"
+        "claude-production-352548e2.up.railway.app"
     ]
 )
 
-app = mcp.streamable_http_app(
-    transport_security=security
-)
 
-
-# Protect MCP endpoint with your secret token
+# Authentication middleware
 class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
@@ -85,4 +85,3 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port
     )
-    
